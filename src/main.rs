@@ -9,7 +9,7 @@ fn read_dictionary(size_word:usize) -> Vec<String> {
 
     let mut word_list: Vec<String> = Vec::new();
 
-    let file = File::open("dictionary.txt").unwrap();
+    let file = File::open("src/dictionary.txt").unwrap();
     let reader = BufReader::new(file);
 
     for word in reader.lines().map(|w| w.unwrap()).filter(|w| w.len() == size_word) {
@@ -22,17 +22,15 @@ fn read_dictionary(size_word:usize) -> Vec<String> {
 
 fn main() {
 
-    let contents = fs::read_to_string("input.txt")
+    let contents = fs::read_to_string("src/input.txt")
         .expect("Wrong file name!");
 
-    for line in contents.split("\n") {
+    for line in contents.lines() {
 
-        let tokens: Vec<&str> = line.split_whitespace().collect();
+        let tokens: Vec<_> = line.split_whitespace().collect();
 
-        let word_list = read_dictionary(tokens[0].to_string().len());
+        let word_list = read_dictionary(tokens[0].len());
 
-        ang::build_ladder(tokens[0].to_string(), tokens[1].to_string());
-
-        println!("Number of words: {}", word_list.len());        
+        ang::build_ladder(tokens[0].to_string(), tokens[1].to_string(), word_list);     
     }
 }
