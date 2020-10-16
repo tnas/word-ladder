@@ -31,6 +31,7 @@ fn main() {
 
         let word_list = read_dictionary(tokens[0].len());
 
+        println!("Searching ladder between {} and {} ...", tokens[0].to_string(), tokens[1].to_string());
         ang::build_ladder(tokens[0].to_string(), tokens[1].to_string(), word_list);     
     }
 }
