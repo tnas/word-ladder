@@ -8,4 +8,3 @@ edition = "2018"
 
 [dependencies]
 crossbeam-utils = "0.8.0"
-cpu-time = "1.0.0"
