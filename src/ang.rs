@@ -1,6 +1,7 @@
 use crossbeam_utils::thread;
 use std::time::{Instant};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 use std::slice;
 
 const NTHREADS: usize = 8;
@@ -21,7 +22,7 @@ fn is_one_letter_different(baseword: &String, word: &String) -> bool {
 }
 
 
-
+#[inline]
 fn get_word_position(dictionary: &Vec<String>, base_word: &String) -> usize {
     return dictionary.iter().position(|w| w == base_word).unwrap();
 }
@@ -80,27 +81,7 @@ fn build_graph(dictionary: &Vec<String>) -> Vec<Vec<usize>> {
 }
 
 
-
-
-
-pub fn build_ladder(start: String, end: String, dictionary: Vec<String>) {
-
-
-    if start.len() != end.len() {
-        println!("There is no word ladder between {} and {}!", start, end);
-        return;
-    }
-
-    //println!("{} - {} - Number of words: {}", start, end, dictionary.len());
-
-    /*
-    let dictionary: Vec<String> = vec!["monk".to_string(), "mock".to_string(), "pock".to_string(), "pork".to_string(), "perk".to_string(), "perl".to_string()];
-    let graph: Vec<Vec<usize>> = build_graph(&dictionary);
-    */
-
-    let now = Instant::now();
-    let graph: Vec<Vec<usize>> = build_graph(&dictionary);
-    println!("[Building graph] Elapsed CPU time: {:?}",  now.elapsed());
+fn build_neighborhood(graph: &Vec<Vec<usize>>, dictionary: &Vec<String>, start: &String, end: &String) -> (Vec<Vec<usize>>, bool) {
 
     let mut neighborhood: Vec<Vec<usize>> = Vec::new();
     let n_words = dictionary.len();
@@ -125,7 +106,7 @@ pub fn build_ladder(start: String, end: String, dictionary: Vec<String>) {
 
                     next_level.push(col);
 
-                    if dictionary[col] == end {
+                    if dictionary[col] == *end {
                         found_end = true;
                         break 'levelloop;
                     }
@@ -140,9 +121,88 @@ pub fn build_ladder(start: String, end: String, dictionary: Vec<String>) {
         neighborhood.push(next_level);
     }
 
+    return (neighborhood, found_end);
+}
+
+
+
+fn build_neighborhood_parallel(dictionary: &Vec<String>, start: &String, end: &String) -> (Vec<Vec<usize>>, bool)  {
+    
+    let mut neighborhood: Vec<Vec<usize>> = Vec::new();
+    let word_index = get_word_position(&dictionary, &start);
+    neighborhood.push(vec![word_index]); 
+
+    let n_words = dictionary.len();
+    let mut is_word_available: Vec<bool> = vec![true; n_words];
+    is_word_available[word_index] = false;
+    let mut n_available_words = n_words;
+
+    let (num_threads, chunk) = if NTHREADS > n_words { (n_words, 1) } else { (NTHREADS, f32::ceil(n_words as f32 / NTHREADS as f32) as usize) };
+    let mut found_end = AtomicBool::new(false);
+    let mut n_available_words = AtomicUsize::new(n_words);
+    let mut level = AtomicUsize::new(0);
+
+    thread::scope(|scope| {
+
+        let arc_wordlist = Arc::new(dictionary);
+
+        for n_th in 0..num_threads {
+            
+            let th_wordlist = Arc::clone(&arc_wordlist);
+
+            scope.spawn(move |_| {
+
+                while !found_end.load(Ordering::Relaxed) && n_available_words.load(Ordering::Relaxed) > 0 {
+
+                    println!("thread {} running", n_th);
+
+                    let mut neighborhood_level: Vec<usize> = Vec::new();
+                    
+                    level.fetch_add(1, Ordering::SeqCst);
+                    neighborhood.push(neighborhood_level);
+                    
+
+                    found_end.store(false, Ordering::Relaxed);
+                    n_available_words.fetch_sub(1, Ordering::SeqCst);
+                }
+            });
+        }
+    }).unwrap();
+
+    return (neighborhood, found_end.load(Ordering::Relaxed));
+}
+
+
+
+pub fn build_ladder(start: String, end: String, dictionary: Vec<String>) {
+
+    if start.len() != end.len() {
+        println!("There is no word ladder between {} and {}!", start, end);
+        return;
+    }
+
+    /*
+    println!("{} - {} - Number of words: {}", start, end, dictionary.len());
+    let dictionary: Vec<String> = vec!["monk".to_string(), "mock".to_string(), "pock".to_string(), "pork".to_string(), "perk".to_string(), "perl".to_string()];
+    let graph: Vec<Vec<usize>> = build_graph(&dictionary);
+    */
+
+    /*
+    let time_graph = Instant::now();
+    let graph: Vec<Vec<usize>> = build_graph(&dictionary);
+    println!("[Building graph] CPU time: {:?}",  time_graph.elapsed());
+
+    let time_neighborhood = Instant::now();
+    let (neighborhood, found_end) = build_neighborhood(&graph, &dictionary, &start, &end);
+    println!("[Building neighborhood] CPU time: {:?}",  time_neighborhood.elapsed());
+    */
+    
+    let (neighborhood, found_end) = build_neighborhood_parallel(&dictionary, &start, &end);
+
     if found_end {
 
-        let mut ladder: Vec<&String> = Vec::with_capacity(level + 1);
+        let level = neighborhood.len();
+        let mut ladder: Vec<&String> = Vec::with_capacity(level);
         ladder.push(&end);
         let mut prev_index = get_word_position(&dictionary, &end);
         
