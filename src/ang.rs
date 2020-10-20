@@ -1,6 +1,6 @@
 use crossbeam_utils::thread;
 use std::time::{Instant};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 use std::slice;
 
@@ -126,50 +126,89 @@ fn build_neighborhood(graph: &Vec<Vec<usize>>, dictionary: &Vec<String>, start: 
 
 
 
-fn build_neighborhood_parallel(dictionary: &Vec<String>, start: &String, end: &String) -> (Vec<Vec<usize>>, bool)  {
+fn build_neighborhood_parallel(dictionary: &Vec<String>, start: &String, end: &String) -> Vec<usize> {
     
-    let mut neighborhood: Vec<Vec<usize>> = Vec::new();
-    let word_index = get_word_position(&dictionary, &start);
-    neighborhood.push(vec![word_index]); 
-
     let n_words = dictionary.len();
-    let mut is_word_available: Vec<bool> = vec![true; n_words];
-    is_word_available[word_index] = false;
-    let mut n_available_words = n_words;
+    let num_threads = if NTHREADS > n_words { n_words } else { NTHREADS };
+    //let num_threads = 1;
 
-    let (num_threads, chunk) = if NTHREADS > n_words { (n_words, 1) } else { (NTHREADS, f32::ceil(n_words as f32 / NTHREADS as f32) as usize) };
-    let mut found_end = AtomicBool::new(false);
-    let mut n_available_words = AtomicUsize::new(n_words);
-    let mut level = AtomicUsize::new(0);
+    let start_index = get_word_position(&dictionary, &start);
+    let word_levels: Vec<RwLock<usize>> = std::iter::repeat_with(|| RwLock::new(usize::MAX)).take(n_words).collect();
+    *(word_levels[start_index].write().unwrap()) = 0;
 
+    let thread_levels: Vec<RwLock<usize>> = std::iter::repeat_with(|| RwLock::new(usize::MAX)).take(num_threads).collect();
+
+    let arc_word_levels = Arc::new(word_levels);
+    let arc_thread_levels = Arc::new(thread_levels);
+    let arc_n_available_words = Arc::new(AtomicUsize::new(n_words - 1));
+    let arc_found_end = Arc::new(AtomicBool::new(false));
+    let lock_level = Arc::new(Mutex::new(0));
+    let level = Arc::new(AtomicUsize::new(0));
+    
     thread::scope(|scope| {
-
-        let arc_wordlist = Arc::new(dictionary);
 
         for n_th in 0..num_threads {
             
-            let th_wordlist = Arc::clone(&arc_wordlist);
+            let th_word_levels = Arc::clone(&arc_word_levels);
+            let thread_level_alive = Arc::clone(&arc_thread_levels);
+            let th_n_available_words = Arc::clone(&arc_n_available_words);
+            let th_found_end = Arc::clone(&arc_found_end);
+            let th_lock_level = Arc::clone(&lock_level);
+            let available_level = Arc::clone(&level);
 
             scope.spawn(move |_| {
 
-                while !found_end.load(Ordering::Relaxed) && n_available_words.load(Ordering::Relaxed) > 0 {
+                while !th_found_end.load(Ordering::Relaxed) && th_n_available_words.load(Ordering::Relaxed) > 0 {
 
-                    println!("thread {} running", n_th);
+                    let level_lock = th_lock_level.lock().unwrap(); 
+                    let th_level = available_level.load(Ordering::Relaxed);
+                    available_level.fetch_add(1, Ordering::SeqCst);
+                    *thread_level_alive[n_th].write().unwrap() = th_level;
+                    println!("thread {} working on level {}", n_th, th_level);
+                    drop(level_lock); 
 
-                    let mut neighborhood_level: Vec<usize> = Vec::new();
-                    
-                    level.fetch_add(1, Ordering::SeqCst);
-                    neighborhood.push(neighborhood_level);
-                    
+                    loop {
 
-                    found_end.store(false, Ordering::Relaxed);
-                    n_available_words.fetch_sub(1, Ordering::SeqCst);
+                        for idbase in (0..n_words).into_iter().filter(|&i| *th_word_levels[i].read().unwrap() == th_level) {
+
+                            for idcmp in (0..n_words).into_iter().filter(|&i| *th_word_levels[i].read().unwrap() == usize::MAX) {
+
+                                if is_one_letter_different(&dictionary[idbase], &dictionary[idcmp]) {
+
+                                    if dictionary[idcmp] == *end {
+                                        th_found_end.store(true, Ordering::Relaxed);
+                                        println!("thread {} - End element has been found at position {} - pair ({}, {})", n_th, idcmp, &dictionary[idbase], &dictionary[idcmp]);
+                                    }
+
+                                    *th_word_levels[idcmp].write().unwrap() = th_level + 1;
+                                    th_n_available_words.fetch_sub(1, Ordering::SeqCst);
+                                    println!("thread {} set level {} for position {} - pair ({}, {})", n_th, th_level + 1, idcmp, &dictionary[idbase], &dictionary[idcmp]);
+                                }
+                            }
+                        }
+
+                        let keep_alive = th_level > 0 && (0..num_threads).into_iter().any(|id| *thread_level_alive[id].read().unwrap() == th_level - 1);
+                        if !keep_alive { break; }
+                    }  
+
+                   println!("thread {} testing stop condition: {} && {}", n_th, !th_found_end.load(Ordering::Relaxed), th_n_available_words.load(Ordering::Relaxed) > 0);
                 }
+
+                println!("thread {} finished!", n_th);
             });
         }
     }).unwrap();
 
-    return (neighborhood, found_end.load(Ordering::Relaxed));
+    println!("available words after: {}", arc_n_available_words.load(Ordering::Relaxed));
+
+    let mut structure_level = vec![usize::MAX; n_words];
+    for id in 0..n_words {
+        structure_level[id] = *arc_word_levels[id].read().unwrap();
+    }
+
+    println!("{:?}", structure_level);
+
+    return structure_level;
 }
 
 
@@ -196,9 +235,11 @@ pub fn build_ladder(start: String, end: String, dictionary: Vec<String>) {
     let (neighborhood, found_end) = build_neighborhood(&graph, &dictionary, &start, &end);
     println!("[Building neighborhood] CPU time: {:?}",  time_neighborhood.elapsed());
     */
-    
-    let (neighborhood, found_end) = build_neighborhood_parallel(&dictionary, &start, &end);
 
+    let dictionary: Vec<String> = vec!["monk".to_string(), "mock".to_string(), "pock".to_string(), "pork".to_string(), "perk".to_string(), "perl".to_string()];
+    build_neighborhood_parallel(&dictionary, &start, &end);
+
+    /*
     if found_end {
 
         let level = neighborhood.len();
@@ -226,5 +267,6 @@ pub fn build_ladder(start: String, end: String, dictionary: Vec<String>) {
     else {
         println!("There is no word ladder between {} and {}!", start, end);
     }
+    */
 }
 
