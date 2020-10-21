@@ -4,7 +4,8 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 use std::slice;
 
-const NTHREADS: usize = 8;
+const ANG_MODE_GRAPH: &str = "-g";
+const ANG_MODE_DYNAMIC: &str = "-d";
 
 
 fn is_one_letter_different(baseword: &String, word: &String) -> bool {
@@ -29,13 +30,13 @@ fn get_word_position(dictionary: &Vec<String>, base_word: &String) -> usize {
 
 
 
-fn build_graph(dictionary: &Vec<String>) -> Vec<Vec<usize>> {
+fn build_graph(dictionary: &Vec<String>, nthreads: usize) -> Vec<Vec<usize>> {
 
     let s_graph = dictionary.len();
     let mut graph: Vec<Vec<usize>> = vec![vec![0; s_graph]; s_graph];
     
-    let (num_threads, chunk) = if NTHREADS > s_graph { (s_graph, 1) } else { (NTHREADS, f32::ceil(s_graph as f32 / NTHREADS as f32) as usize) };
-    let mut sliced_graph: Vec<&mut [Vec<usize>]> = Vec::with_capacity(NTHREADS);
+    let (num_threads, chunk) = if nthreads > s_graph { (s_graph, 1) } else { (nthreads, f32::ceil(s_graph as f32 / nthreads as f32) as usize) };
+    let mut sliced_graph: Vec<&mut [Vec<usize>]> = Vec::with_capacity(nthreads);
     let ptr_graph = graph.as_mut_ptr();
 
     let mut offset;
@@ -126,120 +127,16 @@ fn build_neighborhood(graph: &Vec<Vec<usize>>, dictionary: &Vec<String>, start: 
 
 
 
-fn build_neighborhood_parallel(dictionary: &Vec<String>, start: &String, end: &String) -> Vec<usize> {
-    
-    let n_words = dictionary.len();
-    let num_threads = if NTHREADS > n_words { n_words } else { NTHREADS };
-    //let num_threads = 1;
+fn build_neighborhood_parallel(dictionary: &Vec<String>, start: &String, end: &String, nthreads: usize) {
 
-    let start_index = get_word_position(&dictionary, &start);
-    let word_levels: Vec<RwLock<usize>> = std::iter::repeat_with(|| RwLock::new(usize::MAX)).take(n_words).collect();
-    *(word_levels[start_index].write().unwrap()) = 0;
-
-    let thread_levels: Vec<RwLock<usize>> = std::iter::repeat_with(|| RwLock::new(usize::MAX)).take(num_threads).collect();
-
-    let arc_word_levels = Arc::new(word_levels);
-    let arc_thread_levels = Arc::new(thread_levels);
-    let arc_n_available_words = Arc::new(AtomicUsize::new(n_words - 1));
-    let arc_found_end = Arc::new(AtomicBool::new(false));
-    let lock_level = Arc::new(Mutex::new(0));
-    let level = Arc::new(AtomicUsize::new(0));
-    
-    thread::scope(|scope| {
-
-        for n_th in 0..num_threads {
-            
-            let th_word_levels = Arc::clone(&arc_word_levels);
-            let thread_level_alive = Arc::clone(&arc_thread_levels);
-            let th_n_available_words = Arc::clone(&arc_n_available_words);
-            let th_found_end = Arc::clone(&arc_found_end);
-            let th_lock_level = Arc::clone(&lock_level);
-            let available_level = Arc::clone(&level);
-
-            scope.spawn(move |_| {
-
-                while !th_found_end.load(Ordering::Relaxed) && th_n_available_words.load(Ordering::Relaxed) > 0 {
-
-                    let level_lock = th_lock_level.lock().unwrap(); 
-                    let th_level = available_level.load(Ordering::Relaxed);
-                    available_level.fetch_add(1, Ordering::SeqCst);
-                    *thread_level_alive[n_th].write().unwrap() = th_level;
-                    println!("thread {} working on level {}", n_th, th_level);
-                    drop(level_lock); 
-
-                    loop {
-
-                        for idbase in (0..n_words).into_iter().filter(|&i| *th_word_levels[i].read().unwrap() == th_level) {
-
-                            for idcmp in (0..n_words).into_iter().filter(|&i| *th_word_levels[i].read().unwrap() == usize::MAX) {
-
-                                if is_one_letter_different(&dictionary[idbase], &dictionary[idcmp]) {
-
-                                    if dictionary[idcmp] == *end {
-                                        th_found_end.store(true, Ordering::Relaxed);
-                                        println!("thread {} - End element has been found at position {} - pair ({}, {})", n_th, idcmp, &dictionary[idbase], &dictionary[idcmp]);
-                                    }
-
-                                    *th_word_levels[idcmp].write().unwrap() = th_level + 1;
-                                    th_n_available_words.fetch_sub(1, Ordering::SeqCst);
-                                    println!("thread {} set level {} for position {} - pair ({}, {})", n_th, th_level + 1, idcmp, &dictionary[idbase], &dictionary[idcmp]);
-                                }
-                            }
-                        }
-
-                        let keep_alive = th_level > 0 && (0..num_threads).into_iter().any(|id| *thread_level_alive[id].read().unwrap() == th_level - 1);
-                        if !keep_alive { break; }
-                    }  
-
-                   println!("thread {} testing stop condition: {} && {}", n_th, !th_found_end.load(Ordering::Relaxed), th_n_available_words.load(Ordering::Relaxed) > 0);
-                }
-
-                println!("thread {} finished!", n_th);
-            });
-        }
-    }).unwrap();
-
-    println!("available words after: {}", arc_n_available_words.load(Ordering::Relaxed));
-
-    let mut structure_level = vec![usize::MAX; n_words];
-    for id in 0..n_words {
-        structure_level[id] = *arc_word_levels[id].read().unwrap();
-    }
-
-    println!("{:?}", structure_level);
-
-    return structure_level;
-}
-
-
-
-pub fn build_ladder(start: String, end: String, dictionary: Vec<String>) {
-
-    if start.len() != end.len() {
-        println!("There is no word ladder between {} and {}!", start, end);
-        return;
-    }
-
-    /*
-    println!("{} - {} - Number of words: {}", start, end, dictionary.len());
-    let dictionary: Vec<String> = vec!["monk".to_string(), "mock".to_string(), "pock".to_string(), "pork".to_string(), "perk".to_string(), "perl".to_string()];
-    let graph: Vec<Vec<usize>> = build_graph(&dictionary);
-    */
-
-    /*
     let time_graph = Instant::now();
-    let graph: Vec<Vec<usize>> = build_graph(&dictionary);
+    let graph: Vec<Vec<usize>> = build_graph(&dictionary, nthreads);
     println!("[Building graph] CPU time: {:?}",  time_graph.elapsed());
 
     let time_neighborhood = Instant::now();
     let (neighborhood, found_end) = build_neighborhood(&graph, &dictionary, &start, &end);
     println!("[Building neighborhood] CPU time: {:?}",  time_neighborhood.elapsed());
-    */
 
-    let dictionary: Vec<String> = vec!["monk".to_string(), "mock".to_string(), "pock".to_string(), "pork".to_string(), "perk".to_string(), "perl".to_string()];
-    build_neighborhood_parallel(&dictionary, &start, &end);
-
-    /*
     if found_end {
 
         let level = neighborhood.len();
@@ -267,6 +164,136 @@ pub fn build_ladder(start: String, end: String, dictionary: Vec<String>) {
     else {
         println!("There is no word ladder between {} and {}!", start, end);
     }
+}
+
+
+fn build_ladder_parallel(dictionary: &Vec<String>, start: &String, end: &String, nthreads: usize) -> Vec<usize> {
+    
+    let n_words = dictionary.len();
+    let num_threads = if nthreads > n_words { n_words } else { nthreads };
+
+    let start_index = get_word_position(&dictionary, &start);
+    let word_levels: Vec<RwLock<usize>> = std::iter::repeat_with(|| RwLock::new(usize::MAX)).take(n_words).collect();
+    *(word_levels[start_index].write().unwrap()) = 0;
+
+    let thread_levels: Vec<RwLock<usize>> = std::iter::repeat_with(|| RwLock::new(usize::MAX)).take(num_threads).collect();
+
+    let arc_word_levels       = Arc::new(word_levels);
+    let arc_thread_levels     = Arc::new(thread_levels);
+    let arc_found_end         = Arc::new(AtomicBool::new(false));
+    let lock_level            = Arc::new(Mutex::new(0));
+    let level                 = Arc::new(AtomicUsize::new(0));
+    let last_processed_level  = Arc::new(AtomicUsize::new(0));
+    let index_end_word        = Arc::new(AtomicUsize::new(0));
+    
+    thread::scope(|scope| {
+
+        for n_th in 0..num_threads {
+            
+            let th_word_levels       = arc_word_levels.clone();
+            let thread_level_alive   = arc_thread_levels.clone();
+            let th_found_end         = arc_found_end.clone();
+            let th_lock_level        = lock_level.clone();
+            let available_level      = level.clone();
+            let th_last_level        = last_processed_level.clone();
+            let th_index_end_word    = index_end_word.clone();
+
+            scope.spawn(move |_| {
+
+                while !th_found_end.load(Ordering::Relaxed) { 
+
+                    let level_lock = th_lock_level.lock().unwrap(); 
+                    let th_level = available_level.load(Ordering::Relaxed);
+                    available_level.fetch_add(1, Ordering::SeqCst);
+                    *thread_level_alive[n_th].write().unwrap() = th_level;
+                    drop(level_lock); 
+
+                    let mut keep_alive = true;
+
+                    while keep_alive {
+
+                        for idbase in (0..n_words).into_iter().filter(|&i| *th_word_levels[i].read().unwrap() == th_level) {
+                            
+                            for idcmp in (0..n_words).into_iter().filter(|&i| *th_word_levels[i].read().unwrap() > th_level) {
+
+                                if is_one_letter_different(&dictionary[idbase], &dictionary[idcmp]) {
+
+                                    if dictionary[idcmp] == *end {
+                                        th_found_end.store(true, Ordering::Relaxed);
+                                        th_last_level.store(th_level + 1, Ordering::Relaxed);
+                                        th_index_end_word.store(idcmp, Ordering::Relaxed);
+                                    }
+
+                                    *th_word_levels[idcmp].write().unwrap() = th_level + 1;
+                                }
+                            }
+                        }
+
+                        // Checking if thread must keep alive
+                        keep_alive = false;
+                        if th_level > 0 {
+                            for id in 0..num_threads {
+                                if *thread_level_alive[id].read().unwrap() == th_level - 1 {
+                                    keep_alive = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if !keep_alive { 
+                            *thread_level_alive[n_th].write().unwrap() = usize::MAX;
+                        }
+                    }  
+                }
+            });
+        }
+    }).unwrap();
+
+
+    let last_level = last_processed_level.load(Ordering::Relaxed);
+    let mut structure_level: Vec<usize> = vec![0; last_level + 1];
+    structure_level[last_level] = index_end_word.load(Ordering::Relaxed);
+
+    for level in (0..last_level).rev() {
+        for id in (0..n_words).filter(|&i| *arc_word_levels[i].read().unwrap() == level) {
+            if is_one_letter_different(&dictionary[structure_level[level + 1]], &dictionary[id]) {
+                structure_level[level] = id;
+                break;
+            }
+        }
+    }
+
+    return structure_level;
+}
+
+
+
+pub fn build_ladder(start: String, end: String, dictionary: Vec<String>, mode: String, nthread: usize) {
+
+    if start.len() != end.len() {
+        println!("There is no word ladder between {} and {}!", start, end);
+        return;
+    }
+    /*
+    println!("{} - {} - Number of words: {}", start, end, dictionary.len());
+    let dictionary: Vec<String> = vec!["monk".to_string(), "mock".to_string(), "pock".to_string(), "pork".to_string(), "perk".to_string(), "perl".to_string()];
+    let graph: Vec<Vec<usize>> = build_graph(&dictionary);
     */
+
+    match mode.as_str() {        
+        ANG_MODE_DYNAMIC => {
+            let time_ladder = Instant::now();
+            let ladder: Vec<usize> = build_ladder_parallel(&dictionary, &start, &end, nthread);
+            println!("[Building ladder] CPU time: {:?}",  time_ladder.elapsed());
+        
+            for id in 0..ladder.len() {
+                print!("[{}] ", dictionary[ladder[id]]);
+            }
+        
+            println!("\nSize of ladder: {}", ladder.len());
+        },
+        ANG_MODE_GRAPH => build_neighborhood_parallel(&dictionary, &start, &end, nthread),
+        &_ => panic!("Undefined option")
+    }
 }
 
