@@ -12,21 +12,3 @@ There is no word ladder between encyclopedia and brown!
 ['train', 'brain', 'brawn', 'brown', 'brows', 'brogs', 'biogs', 'bings', 'bines', 'bikes']
 ['babies', 'gabies', 'gables', 'sables', 'sabled', 'sailed', 'stiled', 'stiles', 'steles', 'stells', 'steels', 'steeps', 'sleeps', 'sleepy']
 ['brewing', 'crewing', 'crowing', 'trowing', 'troking', 'broking', 'booking', 'boobing', 'bobbing', 'bobbins', 'bobbies', 'bobbles', 'wobbles', 'wobbled', 'wabbled', 'warbled', 'warsled', 'warsted', 'waisted', 'whisted', 'whisked', 'whiskey']
-
-
-
-Respective inputs:
-dears fears
-encyclopedia brown
-monk perl
-slow fast
-blue pink
-stone money
-money smart
-devil angel
-atlas zebra
-babes child
-mumbo ghost
-train bikes
-babies sleepy
-brewing whiskey

@@ -1,5 +1,5 @@
 use crossbeam_utils::thread;
-use std::time::{Instant};
+use std::time::{Instant, Duration};
 use std::sync::{Arc, Mutex, RwLock};
 use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 use std::slice;
@@ -127,47 +127,43 @@ fn build_neighborhood(graph: &Vec<Vec<usize>>, dictionary: &Vec<String>, start: 
 
 
 
-fn build_neighborhood_parallel(dictionary: &Vec<String>, start: &String, end: &String, nthreads: usize) {
+fn build_neighborhood_parallel(dictionary: &Vec<String>, start: &String, end: &String, nthreads: usize) -> (Duration, Duration, bool, Vec<usize>) {
 
     let time_graph = Instant::now();
     let graph: Vec<Vec<usize>> = build_graph(&dictionary, nthreads);
-    println!("[Building graph] CPU time: {:?}",  time_graph.elapsed());
+    let duration_graph = time_graph.elapsed();
 
     let time_neighborhood = Instant::now();
     let (neighborhood, found_end) = build_neighborhood(&graph, &dictionary, &start, &end);
-    println!("[Building neighborhood] CPU time: {:?}",  time_neighborhood.elapsed());
+    let duration_neighborhood = time_neighborhood.elapsed();
+
+    let mut level = neighborhood.len();
+    let mut ladder: Vec<usize> = vec![0; level];
 
     if found_end {
 
-        let level = neighborhood.len();
-        let mut ladder: Vec<&String> = Vec::with_capacity(level);
-        ladder.push(&end);
         let mut prev_index = get_word_position(&dictionary, &end);
-        
+        ladder[level - 1] = prev_index;
+        level -= 1;
+            
         for neighbd in (0..level).rev() {
-    
+        
             for w_index in neighborhood[neighbd].iter() {
-    
+        
                 if graph[prev_index][*w_index] == 1 {
-                    ladder.push(&dictionary[*w_index]);
+                    ladder[neighbd] = *w_index;
                     prev_index = *w_index;
                     break;
                 }
             }
         }
+    }
     
-        while let Some(top) = ladder.pop() {
-            print!("[{}] ", top);
-        }
-        println!();
-    }
-    else {
-        println!("There is no word ladder between {} and {}!", start, end);
-    }
+    return (duration_graph, duration_neighborhood, found_end, ladder);
 }
 
 
-fn build_ladder_parallel(dictionary: &Vec<String>, start: &String, end: &String, nthreads: usize) -> Vec<usize> {
+fn build_ladder_parallel(dictionary: &Vec<String>, start: &String, end: &String, nthreads: usize) -> (bool, Vec<usize>) {
     
     let n_words = dictionary.len();
     let num_threads = if nthreads > n_words { n_words } else { nthreads };
@@ -181,6 +177,7 @@ fn build_ladder_parallel(dictionary: &Vec<String>, start: &String, end: &String,
     let arc_word_levels       = Arc::new(word_levels);
     let arc_thread_levels     = Arc::new(thread_levels);
     let arc_found_end         = Arc::new(AtomicBool::new(false));
+    let arc_game_over         = Arc::new(AtomicBool::new(false));
     let lock_level            = Arc::new(Mutex::new(0));
     let level                 = Arc::new(AtomicUsize::new(0));
     let last_processed_level  = Arc::new(AtomicUsize::new(0));
@@ -193,6 +190,7 @@ fn build_ladder_parallel(dictionary: &Vec<String>, start: &String, end: &String,
             let th_word_levels       = arc_word_levels.clone();
             let thread_level_alive   = arc_thread_levels.clone();
             let th_found_end         = arc_found_end.clone();
+            let th_game_over         = arc_game_over.clone();
             let th_lock_level        = lock_level.clone();
             let available_level      = level.clone();
             let th_last_level        = last_processed_level.clone();
@@ -200,7 +198,7 @@ fn build_ladder_parallel(dictionary: &Vec<String>, start: &String, end: &String,
 
             scope.spawn(move |_| {
 
-                while !th_found_end.load(Ordering::Relaxed) { 
+                while !th_found_end.load(Ordering::Relaxed) && !th_game_over.load(Ordering::Relaxed) { 
 
                     let level_lock = th_lock_level.lock().unwrap(); 
                     let th_level = available_level.load(Ordering::Relaxed);
@@ -208,9 +206,9 @@ fn build_ladder_parallel(dictionary: &Vec<String>, start: &String, end: &String,
                     *thread_level_alive[n_th].write().unwrap() = th_level;
                     drop(level_lock); 
 
-                    let mut keep_alive = true;
+                    let mut keep_alive_at_level = true;
 
-                    while keep_alive {
+                    while keep_alive_at_level {
 
                         for idbase in (0..n_words).into_iter().filter(|&i| *th_word_levels[i].read().unwrap() == th_level) {
                             
@@ -230,42 +228,68 @@ fn build_ladder_parallel(dictionary: &Vec<String>, start: &String, end: &String,
                         }
 
                         // Checking if thread must keep alive
-                        keep_alive = false;
+                        keep_alive_at_level = false;
                         if th_level > 0 {
                             for id in 0..num_threads {
                                 if *thread_level_alive[id].read().unwrap() == th_level - 1 {
-                                    keep_alive = true;
+                                    keep_alive_at_level = true;
                                     break;
                                 }
                             }
                         }
 
-                        if !keep_alive { 
+                        if !keep_alive_at_level { 
                             *thread_level_alive[n_th].write().unwrap() = usize::MAX;
                         }
                     }  
+
+                    th_game_over.store(true, Ordering::Relaxed);
+                    for id in 0..num_threads {
+                        if *thread_level_alive[id].read().unwrap() != usize::MAX {
+                            th_game_over.store(false, Ordering::Relaxed);
+                            break;
+                        }
+                    }
                 }
             });
         }
     }).unwrap();
 
-
+    let found = arc_found_end.load(Ordering::Relaxed);
     let last_level = last_processed_level.load(Ordering::Relaxed);
     let mut structure_level: Vec<usize> = vec![0; last_level + 1];
-    structure_level[last_level] = index_end_word.load(Ordering::Relaxed);
 
-    for level in (0..last_level).rev() {
-        for id in (0..n_words).filter(|&i| *arc_word_levels[i].read().unwrap() == level) {
-            if is_one_letter_different(&dictionary[structure_level[level + 1]], &dictionary[id]) {
-                structure_level[level] = id;
-                break;
+    if found {
+
+        structure_level[last_level] = index_end_word.load(Ordering::Relaxed);
+    
+        for level in (0..last_level).rev() {
+            for id in (0..n_words).filter(|&i| *arc_word_levels[i].read().unwrap() == level) {
+                if is_one_letter_different(&dictionary[structure_level[level + 1]], &dictionary[id]) {
+                    structure_level[level] = id;
+                    break;
+                }
             }
         }
     }
 
-    return structure_level;
+    return (found, structure_level);
 }
 
+
+fn print_ladder(exist: bool, start: String, end: String, ladder: &Vec<usize>, dictionary: &Vec<String>) {
+
+    if exist {
+        for id in 0..ladder.len() {
+            print!("[{}] ", dictionary[ladder[id]]);
+        }
+    
+        println!("\nSize of ladder: {}", ladder.len());
+    }
+    else {
+        println!("There is no word ladder between {} and {}!", start, end);
+    }
+}
 
 
 pub fn build_ladder(start: String, end: String, dictionary: Vec<String>, mode: String, nthread: usize) {
@@ -274,25 +298,26 @@ pub fn build_ladder(start: String, end: String, dictionary: Vec<String>, mode: S
         println!("There is no word ladder between {} and {}!", start, end);
         return;
     }
-    /*
-    println!("{} - {} - Number of words: {}", start, end, dictionary.len());
-    let dictionary: Vec<String> = vec!["monk".to_string(), "mock".to_string(), "pock".to_string(), "pork".to_string(), "perk".to_string(), "perl".to_string()];
-    let graph: Vec<Vec<usize>> = build_graph(&dictionary);
-    */
 
-    match mode.as_str() {        
+    match mode.as_str() {  
+
         ANG_MODE_DYNAMIC => {
+
             let time_ladder = Instant::now();
-            let ladder: Vec<usize> = build_ladder_parallel(&dictionary, &start, &end, nthread);
+            let (found, ladder) = build_ladder_parallel(&dictionary, &start, &end, nthread);
             println!("[Building ladder] CPU time: {:?}",  time_ladder.elapsed());
-        
-            for id in 0..ladder.len() {
-                print!("[{}] ", dictionary[ladder[id]]);
-            }
-        
-            println!("\nSize of ladder: {}", ladder.len());
+            print_ladder(found, start, end, &ladder, &dictionary);
         },
-        ANG_MODE_GRAPH => build_neighborhood_parallel(&dictionary, &start, &end, nthread),
+
+        ANG_MODE_GRAPH => {
+            let time_ladder = Instant::now();
+            let (time_graph, time_neigh, found, ladder) = build_neighborhood_parallel(&dictionary, &start, &end, nthread);
+            println!("[Building ladder total] CPU time: {:?}",  time_ladder.elapsed());
+            println!("[--Building graph] CPU time: {:?}",  time_graph);
+            println!("[--Building neighborhood] CPU time: {:?}",  time_neigh);
+            print_ladder(found, start, end, &ladder, &dictionary);
+        }
+
         &_ => panic!("Undefined option")
     }
 }
