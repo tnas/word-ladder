@@ -53,13 +53,17 @@ Add them to the queue. The queue size is now 14. Repeat the procedure until you 
 ending word or such a word ladder does not exist. Make sure you do not run into an infinite
 loop!
 
-##Usage
+## Usage
 
-### Not Optimized: `cargo run -- <MODE> <THREADS>`
-### Optimized: `cargo run --release -- <MODE> <THREADS>`
+### Not Optimized: 
+`cargo run -- <MODE> <THREADS>`
+
+### Optimized: 
+`cargo run --release -- <MODE> <THREADS>`
+
 MODE: 
-- -g (for building the complete graph in parallel)
-- -d (for building neighborhoods dynamically)
+- `-g` (for building the complete graph in parallel)
+- `-d` (for building neighborhoods dynamically)
 
 
 
