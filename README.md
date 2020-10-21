@@ -55,8 +55,8 @@ loop!
 
 ##Usage
 
-###Not Optimized: `cargo run -- <MODE> <THREADS>`
-###Optimized: `cargo run --release -- <MODE> <THREADS>`
+### Not Optimized: `cargo run -- <MODE> <THREADS>`
+### Optimized: `cargo run --release -- <MODE> <THREADS>`
 MODE: 
 - -g (for building the complete graph in parallel)
 - -d (for building neighborhoods dynamically)
