@@ -172,12 +172,14 @@ fn build_ladder_parallel(dictionary: &Vec<String>, start: &String, end: &String,
     let word_levels: Vec<RwLock<usize>> = std::iter::repeat_with(|| RwLock::new(usize::MAX)).take(n_words).collect();
     *(word_levels[start_index].write().unwrap()) = 0;
 
-    let thread_levels: Vec<RwLock<usize>> = std::iter::repeat_with(|| RwLock::new(usize::MAX)).take(num_threads).collect();
+    let is_word_processed: Vec<RwLock<bool>> = std::iter::repeat_with(|| RwLock::new(false)).take(n_words).collect();
+    let level_checked_to_die: Vec<RwLock<bool>> = std::iter::repeat_with(|| RwLock::new(false)).take(n_words).collect();
+    *(level_checked_to_die[0].write().unwrap()) = true;
 
     let arc_word_levels       = Arc::new(word_levels);
-    let arc_thread_levels     = Arc::new(thread_levels);
+    let arc_word_processed    = Arc::new(is_word_processed);
+    let arc_checked_to_die    = Arc::new(level_checked_to_die);
     let arc_found_end         = Arc::new(AtomicBool::new(false));
-    let arc_game_over         = Arc::new(AtomicBool::new(false));
     let lock_level            = Arc::new(Mutex::new(0));
     let level                 = Arc::new(AtomicUsize::new(0));
     let last_processed_level  = Arc::new(AtomicUsize::new(0));
@@ -185,33 +187,42 @@ fn build_ladder_parallel(dictionary: &Vec<String>, start: &String, end: &String,
     
     thread::scope(|scope| {
 
-        for n_th in 0..num_threads {
+        for _ in 0..num_threads {
             
-            let th_word_levels       = arc_word_levels.clone();
-            let thread_level_alive   = arc_thread_levels.clone();
-            let th_found_end         = arc_found_end.clone();
-            let th_game_over         = arc_game_over.clone();
-            let th_lock_level        = lock_level.clone();
-            let available_level      = level.clone();
-            let th_last_level        = last_processed_level.clone();
-            let th_index_end_word    = index_end_word.clone();
+            let th_word_levels          = arc_word_levels.clone();
+            let th_is_word_processed    = arc_word_processed.clone();
+            let th_level_checked_to_die = arc_checked_to_die.clone();
+            let th_found_end            = arc_found_end.clone();
+            let th_lock_level           = lock_level.clone();
+            let available_level         = level.clone();
+            let th_last_level           = last_processed_level.clone();
+            let th_index_end_word       = index_end_word.clone();
+            let mut thread_has_work     = true;
 
             scope.spawn(move |_| {
 
-                while !th_found_end.load(Ordering::Relaxed) && !th_game_over.load(Ordering::Relaxed) { 
+                while !th_found_end.load(Ordering::Relaxed) && thread_has_work { 
 
                     let level_lock = th_lock_level.lock().unwrap(); 
                     let th_level = available_level.load(Ordering::Relaxed);
                     available_level.fetch_add(1, Ordering::SeqCst);
-                    *thread_level_alive[n_th].write().unwrap() = th_level;
                     drop(level_lock); 
 
-                    let mut keep_alive_at_level = true;
+                    if th_level >= n_words {
+                        thread_has_work = false;
+                        continue;
+                    }
 
-                    while keep_alive_at_level {
+                    let mut last_check_before_die = false;
+
+                    while !*th_level_checked_to_die[th_level].read().unwrap() || !last_check_before_die {
+
+                        if *th_level_checked_to_die[th_level].read().unwrap() { last_check_before_die = true; }
 
                         for idbase in (0..n_words).into_iter().filter(|&i| *th_word_levels[i].read().unwrap() == th_level) {
-                            
+
+                            if *th_is_word_processed[idbase].read().unwrap() { continue; }
+
                             for idcmp in (0..n_words).into_iter().filter(|&i| *th_word_levels[i].read().unwrap() > th_level) {
 
                                 if is_one_letter_different(&dictionary[idbase], &dictionary[idcmp]) {
@@ -223,32 +234,16 @@ fn build_ladder_parallel(dictionary: &Vec<String>, start: &String, end: &String,
                                     }
 
                                     *th_word_levels[idcmp].write().unwrap() = th_level + 1;
+                                    *th_is_word_processed[idcmp].write().unwrap() = false;
                                 }
                             }
-                        }
 
-                        // Checking if thread must keep alive
-                        keep_alive_at_level = false;
-                        if th_level > 0 {
-                            for id in 0..num_threads {
-                                if *thread_level_alive[id].read().unwrap() == th_level - 1 {
-                                    keep_alive_at_level = true;
-                                    break;
-                                }
-                            }
+                            *th_is_word_processed[idbase].write().unwrap() = true;
                         }
+                    }
 
-                        if !keep_alive_at_level { 
-                            *thread_level_alive[n_th].write().unwrap() = usize::MAX;
-                        }
-                    }  
-
-                    th_game_over.store(true, Ordering::Relaxed);
-                    for id in 0..num_threads {
-                        if *thread_level_alive[id].read().unwrap() != usize::MAX {
-                            th_game_over.store(false, Ordering::Relaxed);
-                            break;
-                        }
+                    if th_level + 1 < n_words { 
+                        *th_level_checked_to_die[th_level + 1].write().unwrap() = true; 
                     }
                 }
             });
