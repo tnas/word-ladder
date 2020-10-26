@@ -5,6 +5,8 @@ use std::env;
 
 mod ang;
 
+const LADDER_FINDER: &str = "-f";
+
 
 fn read_dictionary(size_word:usize) -> Vec<String> {
 
@@ -48,13 +50,27 @@ fn main() {
         .expect("Wrong file name!");
     let (ang_mode, nthreads) = parse_arguments();
 
-    for line in contents.lines() {
+    if ang_mode == LADDER_FINDER {
+        
+        let word_list = read_dictionary(nthreads);
+        let wsize = word_list.len();
+        
+        for base in 0..wsize - 1 {
+            for cmp in base + 1 .. wsize {
+                ang::build_ladder(&String::from(&word_list[base]), &String::from(&word_list[cmp]), &word_list, "-d".to_string(), 4);
+            }
+        }
+        
+    }
+    else {
+        for line in contents.lines() {
 
-        let tokens: Vec<_> = line.split_whitespace().collect();
-
-        let word_list = read_dictionary(tokens[0].len());
-
-        println!("Searching ladder between {} and {} ...", tokens[0].to_string(), tokens[1].to_string());
-        ang::build_ladder(tokens[0].to_string(), tokens[1].to_string(), word_list, ang_mode.to_string(), nthreads);     
+            let tokens: Vec<_> = line.split_whitespace().collect();
+    
+            let word_list = read_dictionary(tokens[0].len());
+    
+            println!("Searching ladder between {} and {} ...", tokens[0].to_string(), tokens[1].to_string());
+            ang::build_ladder(&tokens[0].to_string(), &tokens[1].to_string(), &word_list, ang_mode.to_string(), nthreads);     
+        }
     }
 }

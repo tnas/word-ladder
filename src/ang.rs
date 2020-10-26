@@ -272,7 +272,7 @@ fn build_ladder_parallel(dictionary: &Vec<String>, start: &String, end: &String,
 }
 
 
-fn print_ladder(exist: bool, start: String, end: String, ladder: &Vec<usize>, dictionary: &Vec<String>) {
+fn print_ladder(exist: bool, start: &String, end: &String, ladder: &Vec<usize>, dictionary: &Vec<String>) {
 
     if exist {
         for id in 0..ladder.len() {
@@ -287,7 +287,7 @@ fn print_ladder(exist: bool, start: String, end: String, ladder: &Vec<usize>, di
 }
 
 
-pub fn build_ladder(start: String, end: String, dictionary: Vec<String>, mode: String, nthread: usize) {
+pub fn build_ladder(start: &String, end: &String, dictionary: &Vec<String>, mode: String, nthread: usize) {
 
     if start.len() != end.len() {
         println!("There is no word ladder between {} and {}!", start, end);
@@ -299,14 +299,14 @@ pub fn build_ladder(start: String, end: String, dictionary: Vec<String>, mode: S
         ANG_MODE_DYNAMIC => {
 
             let time_ladder = Instant::now();
-            let (found, ladder) = build_ladder_parallel(&dictionary, &start, &end, nthread);
+            let (found, ladder) = build_ladder_parallel(dictionary, start, end, nthread);
             println!("[Building ladder] CPU time: {:?}",  time_ladder.elapsed());
             print_ladder(found, start, end, &ladder, &dictionary);
         },
 
         ANG_MODE_GRAPH => {
             let time_ladder = Instant::now();
-            let (time_graph, time_neigh, found, ladder) = build_neighborhood_parallel(&dictionary, &start, &end, nthread);
+            let (time_graph, time_neigh, found, ladder) = build_neighborhood_parallel(dictionary, start, end, nthread);
             println!("[Building ladder total] CPU time: {:?}",  time_ladder.elapsed());
             println!("[--Building graph] CPU time: {:?}",  time_graph);
             println!("[--Building neighborhood] CPU time: {:?}",  time_neigh);
