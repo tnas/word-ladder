@@ -10,6 +10,8 @@ const ANG_MODE_DYNAMIC: &str = "-d";
 
 fn is_one_letter_different(baseword: &String, word: &String) -> bool {
     
+    if baseword.len() != word.len() { return false; }
+
     let mut word_chars = word.chars();
     let mut diff_counter = 0;
     
@@ -25,7 +27,10 @@ fn is_one_letter_different(baseword: &String, word: &String) -> bool {
 
 #[inline]
 fn get_word_position(dictionary: &Vec<String>, base_word: &String) -> usize {
-    return dictionary.iter().position(|w| w == base_word).unwrap();
+    return match dictionary.iter().position(|w| w == base_word) {
+        Some(v) => v,
+        None => panic!("There is no the word '{}' in the dictionary!", base_word)
+    }
 }
 
 
@@ -289,10 +294,7 @@ fn print_ladder(exist: bool, start: &String, end: &String, ladder: &Vec<usize>, 
 
 pub fn build_ladder(start: &String, end: &String, dictionary: &Vec<String>, mode: String, nthread: usize) {
 
-    if start.len() != end.len() {
-        println!("There is no word ladder between {} and {}!", start, end);
-        return;
-    }
+    assert_eq!(start.len(), end.len(), "There is no word ladder between {} and {}!", start, end);
 
     match mode.as_str() {  
 
