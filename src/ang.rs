@@ -6,6 +6,8 @@ use std::slice;
 
 const ANG_MODE_GRAPH: &str = "-g";
 const ANG_MODE_DYNAMIC: &str = "-d";
+const ANG_MODE_BENCHMARK: &str = "-b";
+const BENCHMARKING_SIZE: u8 = 5;
 
 
 fn is_one_letter_different(baseword: &String, word: &String) -> bool {
@@ -313,6 +315,26 @@ pub fn build_ladder(start: &String, end: &String, dictionary: &Vec<String>, mode
             println!("[--Building graph] CPU time: {:?}",  time_graph);
             println!("[--Building neighborhood] CPU time: {:?}",  time_neigh);
             print_ladder(found, start, end, &ladder, &dictionary);
+        },
+
+        ANG_MODE_BENCHMARK => {
+            let mut total_time_dynamic = Duration::new(0, 0);
+            let mut total_time_graph = Duration::new(0, 0);
+
+            for _ in 0..BENCHMARKING_SIZE {
+
+                let time_dynamic = Instant::now();
+                build_ladder_parallel(dictionary, start, end, nthread);
+                total_time_dynamic += time_dynamic.elapsed();
+
+                let time_graph = Instant::now();
+                build_neighborhood_parallel(dictionary, start, end, 1);
+                total_time_graph += time_graph.elapsed();
+            }
+
+            println!("CPU time for ladder between {} and {} ...", start, end);
+            println!("[Serial ANG] CPU time: {:?}",  total_time_graph.div_f32(BENCHMARKING_SIZE as f32));
+            println!("[Parallel ANG] CPU time: {:?}",  total_time_dynamic.div_f32(BENCHMARKING_SIZE as f32));
         }
 
         &_ => panic!("Undefined option")
