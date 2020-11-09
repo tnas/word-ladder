@@ -176,11 +176,11 @@ fn build_ladder_parallel(dictionary: &Vec<String>, start: &String, end: &String,
     let num_threads = if nthreads > n_words { n_words } else { nthreads };
 
     let start_index = get_word_position(&dictionary, &start);
-    let word_levels: Vec<RwLock<usize>> = std::iter::repeat_with(|| RwLock::new(usize::MAX)).take(n_words).collect();
+    let mut word_levels: Vec<RwLock<usize>> = std::iter::repeat_with(|| RwLock::new(usize::MAX)).take(n_words).collect();
     *(word_levels[start_index].write().unwrap()) = 0;
 
     let is_word_processed: Vec<RwLock<bool>> = std::iter::repeat_with(|| RwLock::new(false)).take(n_words).collect();
-    let level_checked_to_die: Vec<RwLock<bool>> = std::iter::repeat_with(|| RwLock::new(false)).take(n_words).collect();
+    let mut level_checked_to_die: Vec<RwLock<bool>> = std::iter::repeat_with(|| RwLock::new(false)).take(n_words).collect();
     *(level_checked_to_die[0].write().unwrap()) = true;
 
     let arc_word_levels       = Arc::new(word_levels);
@@ -239,18 +239,23 @@ fn build_ladder_parallel(dictionary: &Vec<String>, start: &String, end: &String,
                                         th_last_level.store(th_level + 1, Ordering::Relaxed);
                                         th_index_end_word.store(idcmp, Ordering::Relaxed);
                                     }
+                                    
+                                    let mut curr_level = th_word_levels[idcmp].write().unwrap();
+                                    *curr_level = th_level + 1;
 
-                                    *th_word_levels[idcmp].write().unwrap() = th_level + 1;
-                                    *th_is_word_processed[idcmp].write().unwrap() = false;
+                                    let mut curr_word = th_is_word_processed[idcmp].write().unwrap();
+                                    *curr_word = false;
                                 }
                             }
 
-                            *th_is_word_processed[idbase].write().unwrap() = true;
+                            let mut curr_word = th_is_word_processed[idbase].write().unwrap();
+                            *curr_word = true;
                         }
                     }
 
                     if th_level + 1 < n_words { 
-                        *th_level_checked_to_die[th_level + 1].write().unwrap() = true; 
+                        let mut curr_level = th_level_checked_to_die[th_level + 1].write().unwrap(); 
+                        *curr_level = true;
                     }
                 }
             });
