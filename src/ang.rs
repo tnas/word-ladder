@@ -176,11 +176,11 @@ fn build_ladder_parallel(dictionary: &Vec<String>, start: &String, end: &String,
     let num_threads = if nthreads > n_words { n_words } else { nthreads };
 
     let start_index = get_word_position(&dictionary, &start);
-    let mut word_levels: Vec<RwLock<usize>> = std::iter::repeat_with(|| RwLock::new(usize::MAX)).take(n_words).collect();
+    let word_levels: Vec<RwLock<usize>> = std::iter::repeat_with(|| RwLock::new(usize::MAX)).take(n_words).collect();
     *(word_levels[start_index].write().unwrap()) = 0;
 
     let is_word_processed: Vec<RwLock<bool>> = std::iter::repeat_with(|| RwLock::new(false)).take(n_words).collect();
-    let mut level_checked_to_die: Vec<RwLock<bool>> = std::iter::repeat_with(|| RwLock::new(false)).take(n_words).collect();
+    let level_checked_to_die: Vec<RwLock<bool>> = std::iter::repeat_with(|| RwLock::new(false)).take(n_words).collect();
     *(level_checked_to_die[0].write().unwrap()) = true;
 
     let arc_word_levels       = Arc::new(word_levels);
